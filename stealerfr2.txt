@@ -1,0 +1,1575 @@
+-- ============================================================
+--  LUNE  v1.0  |  © Bolt Industries
+--  UI Style: Lune by Minami/Tsundere
+--  Key API:  https://agent-key-system-1--zzzhinode.replit.app
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local TweenService      = game:GetService("TweenService")
+local HttpService        = game:GetService("HttpService")
+local UserInputService  = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting          = game:GetService("Lighting")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui   = LocalPlayer:WaitForChild("PlayerGui")
+
+--  Universal request 
+local request = (syn and syn.request) or http_request or fluxus_request
+    or KRNL_REQUEST or (getgenv and getgenv().request) or (http and http.request)
+if not request then
+    request = function(o)
+        return { Body = game:HttpGet(o.Url), StatusCode = 200 }
+    end
+end
+
+--  Cleanup old instances 
+pcall(function()
+    for _, g in pairs(PlayerGui:GetChildren()) do
+        if g.Name == "BoltLune" or g.Name == "BoltLuneKey"
+        or g.Name == "BoltLuneLeaf" then g:Destroy() end
+    end
+end)
+
+-- ============================================================
+--  CONFIG / THEME  (Lune style)
+-- ============================================================
+local T = {
+    Background  = Color3.fromRGB(18, 18, 30),
+    Secondary   = Color3.fromRGB(28, 28, 48),
+    Accent      = Color3.fromRGB(180, 140, 255),
+    Accent2     = Color3.fromRGB(120, 200, 255),
+    Text        = Color3.fromRGB(245, 245, 255),
+    SubText     = Color3.fromRGB(160, 160, 185),
+    Error       = Color3.fromRGB(255, 100, 100),
+    Success     = Color3.fromRGB(100, 255, 150),
+    Stroke      = Color3.fromRGB(70, 70, 100),
+    ToggleOn    = Color3.fromRGB(140, 255, 140),
+    ToggleOff   = Color3.fromRGB(55, 55, 80),
+    Gold        = Color3.fromRGB(255, 210, 90),
+    NeonGreen   = Color3.fromRGB(0, 255, 120),
+    Danger      = Color3.fromRGB(255, 90, 120),
+}
+
+local KEY_API  = "https://agent-key-system-1--zzzhinode.replit.app/api/keys/raw"
+local KEY_FILE = "BoltLune_Key.json"
+local ANIM     = 0.3
+
+-- ============================================================
+--  HELPERS
+-- ============================================================
+local function corner(p, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = r or UDim.new(0, 12)
+    c.Parent = p; return c
+end
+
+local function stroke(p, col, th)
+    local s = Instance.new("UIStroke")
+    s.Color           = col or T.Stroke
+    s.Thickness       = th or 1.2
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = p; return s
+end
+
+local function grad(p, c1, c2, rot)
+    local g = Instance.new("UIGradient")
+    g.Color    = ColorSequence.new(c1 or T.Background, c2 or T.Secondary)
+    g.Rotation = rot or 45
+    g.Parent = p; return g
+end
+
+local function tw(o, props, d, es, ed)
+    TweenService:Create(o, TweenInfo.new(
+        d or ANIM,
+        es or Enum.EasingStyle.Quart,
+        ed or Enum.EasingDirection.Out
+    ), props):Play()
+end
+
+local function lerpC(a, b, t)
+    return Color3.new(a.R+(b.R-a.R)*t, a.G+(b.G-a.G)*t, a.B+(b.B-a.B)*t)
+end
+
+local function label(parent, text, size, pos, col, fs, font, xa, zi)
+    local l = Instance.new("TextLabel")
+    l.Size = size; l.Position = pos or UDim2.new(0,0,0,0)
+    l.BackgroundTransparency = 1
+    l.Text = text; l.TextColor3 = col or T.Text
+    l.TextSize = fs or 12; l.Font = font or Enum.Font.GothamSemibold
+    l.TextXAlignment = xa or Enum.TextXAlignment.Left
+    l.ZIndex = zi or 14; l.Parent = parent
+    return l
+end
+
+local function frame(parent, size, pos, bgcol, zi)
+    local f = Instance.new("Frame")
+    f.Size = size; f.Position = pos or UDim2.new(0,0,0,0)
+    f.BackgroundColor3 = bgcol or T.Secondary
+    f.BorderSizePixel = 0; f.ZIndex = zi or 12
+    f.Parent = parent; return f
+end
+
+-- Strip rich text tags, normalize, trim
+local function stripTags(s) return type(s)=="string" and s:gsub("<.->","") or "" end
+local function normalize(s) return type(s)=="string" and s:lower():gsub("%s+",""):gsub("[^%a%d]","") or "" end
+local function trim(s) return type(s)=="string" and s:match("^%s*(.-)%s*$") or "" end
+
+-- ============================================================
+--  BALL REGISTRY  (CLIENT_BALL priority +1000)
+-- ============================================================
+local BOLT_OWN = { BoltLine=true, BoltLandRing=true, BoltLandInner=true,
+                   BoltHitGhost=true, BoltHitInvis=true }
+
+local function isInBadService(obj)
+    local cur = obj.Parent
+    for _ = 1, 16 do
+        if not cur or cur == game then return false end
+        local n = cur.Name
+        if n=="ReplicatedStorage" or n=="ServerStorage" or n=="PlayerGui"
+        or n=="StarterGui" or n=="Lighting" or n=="CoreGui"
+        or n=="StarterPack" or n=="StarterPlayer" then return true end
+        cur = cur.Parent
+    end
+    return false
+end
+
+local function isInAnyChar(obj)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character and obj:IsDescendantOf(p.Character) then return true end
+    end
+    return false
+end
+
+local function getPhysPart(obj)
+    if obj:IsA("BasePart") then return obj end
+    if obj:IsA("Model") then
+        if obj.PrimaryPart then return obj.PrimaryPart end
+        for _, c in ipairs(obj:GetChildren()) do if c:IsA("BasePart") then return c end end
+        for _, c in ipairs(obj:GetDescendants()) do if c:IsA("BasePart") then return c end end
+    end
+    return nil
+end
+
+local BALL_CACHE = {}; local BALL_SET = {}; local SCAN_DONE = false; local selectedBallIdx = nil
+local function hasball(n) return n:lower():find("ball",1,true) ~= nil end
+local function isClientBall(n) return n:upper():sub(1,12) == "CLIENT_BALL_" end
+
+local function tryAdd(obj)
+    if BALL_SET[obj] then return end
+    if not hasball(obj.Name) then return end
+    if BOLT_OWN[obj.Name] then return end
+    if isInBadService(obj) then return end
+    if isInAnyChar(obj) then return end
+    local part = getPhysPart(obj); if not part then return end
+    local e = {part=part, name=obj.Name, obj=obj}
+    BALL_SET[obj] = e; table.insert(BALL_CACHE, e)
+end
+
+local function tryRemove(obj)
+    if not BALL_SET[obj] then return end
+    BALL_SET[obj] = nil
+    local new = {}
+    for _, e in ipairs(BALL_CACHE) do if e.obj ~= obj then table.insert(new, e) end end
+    BALL_CACHE = new
+    if selectedBallIdx and selectedBallIdx > #BALL_CACHE then
+        selectedBallIdx = #BALL_CACHE > 0 and #BALL_CACHE or nil
+    end
+end
+
+local pTick = 0
+local function pruneCache()
+    pTick = pTick + 1; if pTick % 15 ~= 0 then return end
+    local new = {}; local ns = {}
+    for _, e in ipairs(BALL_CACHE) do
+        if e.part and e.part.Parent and not isInAnyChar(e.part) then
+            table.insert(new, e); ns[e.obj] = e
+        else BALL_SET[e.obj] = nil end
+    end
+    BALL_CACHE = new; BALL_SET = ns
+    if selectedBallIdx and selectedBallIdx > #BALL_CACHE then
+        selectedBallIdx = #BALL_CACHE > 0 and #BALL_CACHE or nil
+    end
+end
+
+local function getBV(entry)
+    local best = Vector3.new(0,0,0)
+    pcall(function() best = entry.part.AssemblyLinearVelocity end)
+    return best
+end
+
+local function ballScore(e)
+    if not (e.part and e.part.Parent) then return -1 end
+    local sc = 0; local vel = getBV(e)
+    sc = sc + math.min(vel.Magnitude*5, 150)
+    if not e.part.Anchored then sc = sc + 80 end
+    if isClientBall(e.name) then sc = sc + 1000 end
+    pcall(function() if e.part:IsA("Part") and e.part.Shape == Enum.PartType.Ball then sc = sc + 40 end end)
+    local mx = math.max(e.part.Size.X, e.part.Size.Y, e.part.Size.Z)
+    if mx <= 4 then sc = sc + 30 end; if mx <= 2 then sc = sc + 20 end
+    return sc
+end
+
+local function getSelectedBall()
+    pruneCache(); if #BALL_CACHE == 0 then return nil end
+    if selectedBallIdx ~= nil then
+        return BALL_CACHE[math.clamp(selectedBallIdx, 1, #BALL_CACHE)]
+    end
+    local best, bestSc = BALL_CACHE[1], -math.huge
+    for _, e in ipairs(BALL_CACHE) do
+        local sc = ballScore(e); if sc > bestSc then bestSc = sc; best = e end
+    end
+    return best
+end
+
+local function cycleBall()
+    pruneCache(); if #BALL_CACHE == 0 then selectedBallIdx = nil; return nil end
+    selectedBallIdx = ((selectedBallIdx or 0) % #BALL_CACHE) + 1
+    return BALL_CACHE[selectedBallIdx]
+end
+
+local function unlockBall() selectedBallIdx = nil end
+
+task.spawn(function()
+    local all = workspace:GetDescendants()
+    for i = 1, #all, 300 do
+        for j = i, math.min(i+299, #all) do pcall(tryAdd, all[j]) end
+        task.wait()
+    end
+    SCAN_DONE = true
+end)
+workspace.DescendantAdded:Connect(function(obj) task.defer(function() pcall(tryAdd, obj) end) end)
+workspace.DescendantRemoving:Connect(function(obj) pcall(tryRemove, obj) end)
+
+-- ============================================================
+--  STYLE / ABILITY DETECTION
+-- ============================================================
+local GARBAGE_PATS = {"^%d+$","^%d+%%$","^rbxassetid://%d+$","^lvl$","^level$","^lv$","^rank$","^tier$","^equip$","^select$","^unlock$","^lock$","^u$","^x$","^v$","^ok$","^go$","^on$","^off$","^yes$","^no$","^up$","^dn$","^new$","^old$","^atk$","^def$","^spd$","^hp$","^mp$","^xp$","^cost$","^price$","^buy$","^sell$","^equipped$","^unequipped$","^locked$","^unlocked$"}
+local function isGarbage(text)
+    if not text or type(text) ~= "string" then return true end
+    local t = trim(text):lower(); if #t < 3 or #t > 30 then return true end
+    if t:match("^rbxassetid://") then return true end
+    for _, p in ipairs(GARBAGE_PATS) do if t:match(p) then return true end end
+    return #(t:gsub("%d",""):gsub("%%","")) < 2
+end
+local function isVSN(text)
+    if not text or type(text) ~= "string" then return false end
+    local t = trim(text); if #t < 3 or #t > 30 or isGarbage(t) then return false end
+    return #(t:gsub("%d",""):gsub("%s",""):gsub("[^%a]","")) >= 2
+end
+local function isVAN(text)
+    if not text or type(text) ~= "string" then return false end
+    local t = trim(text); if #t < 3 or #t > 40 then return false end
+    if t:match("^%d+$") or t:match("^rbxassetid://") then return false end
+    local bad = {"equipped","unequipped","locked","unlocked","unlock","equip","select","common","rare","epic","legendary","slot"}
+    local tl = t:lower(); for _, w in ipairs(bad) do if tl == w then return false end end
+    return #(t:gsub("[^%a%s]","")) >= 2
+end
+
+local function getCleanText(inst)
+    local ok1, ct = pcall(function() return inst.ContentText end)
+    if ok1 and ct and #ct > 0 then local cl = trim(ct); if isVSN(cl) then return cl end end
+    local ok2, t = pcall(function() return inst.Text end)
+    if ok2 and t and #t > 0 then local cl = trim(stripTags(t)); if isVSN(cl) then return cl end end
+    return nil
+end
+
+local function extractText(inst)
+    pcall(function()
+        if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
+            local tx = getCleanText(inst); if tx then return tx end
+        end
+    end)
+    return nil
+end
+
+local function getStyleFromChar()
+    local styles, si = {}, {}
+    pcall(function()
+        local char = LocalPlayer.Character; if not char then return end
+        local jb = char:FindFirstChild("JerseyBack")
+        if jb then
+            for _, c in pairs(jb:GetDescendants()) do
+                local tx = extractText(c)
+                if tx then table.insert(styles,{text=tx,normalized=normalize(tx),equipped=true}); table.insert(si,"JB:"..tx) end
+            end
+        end
+        local nt = char:FindFirstChild("Nametag")
+        if nt then
+            local cont = nt:FindFirstChild("Container")
+            if cont then
+                for _, c in pairs(cont:GetChildren()) do
+                    local nl = c.Name:lower()
+                    if nl:match("stylename") or nl:match("name") then
+                        local tx = extractText(c)
+                        if tx then table.insert(styles,{text=tx,normalized=normalize(tx),equipped=true}); table.insert(si,"NT:"..tx) end
+                    end
+                end
+            end
+        end
+    end)
+    return styles, si
+end
+
+local function getCurrentStyle()
+    local styles, si = getStyleFromChar()
+    pcall(function()
+        for _, g in pairs(PlayerGui:GetChildren()) do
+            if g.Name:lower():match("style") or g.Name:lower():match("inventory") then
+                for _, c in pairs(g:GetDescendants()) do
+                    local tx = extractText(c)
+                    if tx then table.insert(styles,{text=tx,normalized=normalize(tx),equipped=false}); table.insert(si,"GUI:"..tx) end
+                end
+            end
+        end
+    end)
+    if #styles > 0 then
+        for _, s in ipairs(styles) do if s.equipped then return s.text, s.normalized, styles end end
+        return styles[1].text, styles[1].normalized, styles
+    end
+    return "Unknown", "", {}
+end
+
+local function checkHasStyle(n, ss)
+    local s = normalize(n); if s == "" or not ss or #ss == 0 then return false end
+    for _, item in ipairs(ss) do if item.normalized == s then return true end end
+    return false
+end
+
+local function getAbilitySlots()
+    local abilities = {}
+    pcall(function()
+        local lsp = PlayerGui:WaitForChild("Interface",1):WaitForChild("Lobby",1)
+            :WaitForChild("Abilities",1):WaitForChild("LeftSidePanel",1)
+        if not lsp then return end
+        for _, slot in pairs(lsp:GetChildren()) do
+            if slot.Name:match("^Slot%d+") then
+                local aN, isEq = nil, false
+                for _, c in pairs(slot:GetDescendants()) do
+                    if c:IsA("TextLabel") then
+                        local txt = trim(stripTags(c.ContentText or c.Text or ""))
+                        if isVAN(txt) then aN = txt end
+                        if txt:lower() == "equipped" then isEq = true end
+                    end
+                end
+                if aN then table.insert(abilities,{name=aN,normalized=normalize(aN),equipped=isEq}) end
+            end
+        end
+    end)
+    return abilities
+end
+
+local function checkHasAbility(n, ab)
+    local s = normalize(n); if s == "" then return false end
+    for _, a in ipairs(ab) do if a.normalized == s then return true end end
+    return false
+end
+
+local function parseTargets(raw)
+    local t = {}
+    for p in raw:gmatch("[^\n,]+") do local s = trim(p); if s ~= "" then table.insert(t, s) end end
+    return t
+end
+
+-- ============================================================
+--  KNIT SERVICE HELPERS
+-- ============================================================
+local function getKnit(serviceName)
+    return ReplicatedStorage:WaitForChild("Packages",2)
+        :WaitForChild("_Index",2)
+        :WaitForChild("sleitnick_knit@1.7.0",2)
+        :WaitForChild("knit",2)
+        :WaitForChild("Services",2)
+        :WaitForChild(serviceName,2)
+end
+
+local function invokeStyleRoll()
+    return getKnit("StyleService"):WaitForChild("RF",1):WaitForChild("Roll",1):InvokeServer(true)
+end
+
+local function invokeAbilityRoll()
+    return getKnit("AbilityService"):WaitForChild("RF",1):WaitForChild("Roll",1):InvokeServer(true)
+end
+
+local function invokeReward(arg)
+    getKnit("SeasonService"):WaitForChild("RF",1):WaitForChild("RequestRankedReward",1):InvokeServer(arg)
+end
+
+-- ============================================================
+--  KEY SYSTEM
+-- ============================================================
+local KeySystem = {}
+
+function KeySystem:Save(key)
+    pcall(function()
+        if writefile then writefile(KEY_FILE, HttpService:JSONEncode({key=key,ts=os.time()})) end
+    end)
+end
+
+function KeySystem:Load()
+    local ok, data = pcall(function()
+        if isfile and isfile(KEY_FILE) then
+            return HttpService:JSONDecode(readfile(KEY_FILE))
+        end
+        return nil
+    end)
+    if ok and data and data.key then return data.key end
+    return nil
+end
+
+function KeySystem:Validate(key, callback)
+    task.spawn(function()
+        local ok, result = pcall(function() return game:HttpGet(KEY_API) end)
+        if not ok then callback(false, "Connection failed"); return end
+        local validKeys = {}
+        local jok, decoded = pcall(function() return HttpService:JSONDecode(result) end)
+        if jok and type(decoded) == "table" then
+            if decoded.keys and type(decoded.keys) == "table" then
+                validKeys = decoded.keys
+            else
+                for _, v in pairs(decoded) do
+                    if type(v) == "string" then table.insert(validKeys, v)
+                    elseif type(v) == "table" and v.key then table.insert(validKeys, tostring(v.key)) end
+                end
+            end
+        else
+            for line in result:gmatch("[^\r\n]+") do
+                line = line:match("^%s*(.-)%s*$")
+                if #line > 0 then table.insert(validKeys, line) end
+            end
+        end
+        local clean = key:match("^%s*(.-)%s*$")
+        local valid = false
+        for _, vk in ipairs(validKeys) do
+            if tostring(vk):lower() == clean:lower() then valid = true; break end
+        end
+        if valid then self:Save(clean); callback(true, "Key validated") else callback(false, "Invalid key") end
+    end)
+end
+
+-- ============================================================
+--  KEY UI
+-- ============================================================
+local function buildKeyUI(onSuccess)
+    local kGui = Instance.new("ScreenGui")
+    kGui.Name = "BoltLuneKey"; kGui.ResetOnSpawn = false
+    kGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; kGui.Parent = PlayerGui
+
+    local mF = frame(kGui, UDim2.new(0,380,0,270), UDim2.new(0.5,-190,0.5,-135), T.Background, 101)
+    mF.AnchorPoint = Vector2.new(0.5,0.5)
+    corner(mF, UDim.new(0,20)); stroke(mF, T.Stroke, 2); grad(mF, T.Background, T.Secondary, 135)
+
+    local topBar = frame(mF, UDim2.new(1,0,0,44), UDim2.new(0,0,0,0), T.Secondary, 102)
+    corner(topBar, UDim.new(0,20)); grad(topBar, T.Secondary, Color3.fromRGB(35,35,60), 90)
+    local tbFix = frame(topBar, UDim2.new(1,0,0,22), UDim2.new(0,0,0.5,0), T.Secondary, 102)
+    tbFix.BorderSizePixel = 0
+
+    label(topBar," Lune — Key System",UDim2.new(1,-50,0,24),UDim2.new(0,14,0,4),T.Text,16,Enum.Font.GothamBold,Enum.TextXAlignment.Left,103)
+
+    local closeK = Instance.new("TextButton")
+    closeK.Size = UDim2.new(0,30,0,30); closeK.Position = UDim2.new(1,-38,0,7)
+    closeK.BackgroundColor3 = Color3.fromRGB(45,45,70); closeK.BorderSizePixel = 0
+    closeK.Text = ""; closeK.TextColor3 = T.Text; closeK.TextSize = 15
+    closeK.Font = Enum.Font.GothamBold; closeK.ZIndex = 104; closeK.Parent = topBar
+    corner(closeK, UDim.new(1,0)); stroke(closeK, T.Error, 1)
+
+    label(mF,"Enter your access key to continue",UDim2.new(1,-30,0,18),UDim2.new(0,15,0,50),T.SubText,12,Enum.Font.Gotham,Enum.TextXAlignment.Left,102)
+
+    local kBox = frame(mF, UDim2.new(1,-30,0,38), UDim2.new(0,15,0,74), T.Secondary, 102)
+    corner(kBox, UDim.new(0,14)); stroke(kBox, T.Stroke, 1.2); grad(kBox, T.Secondary, Color3.fromRGB(35,35,60), 0)
+    local kInput = Instance.new("TextBox")
+    kInput.Size = UDim2.new(1,-16,1,0); kInput.Position = UDim2.new(0,8,0,0)
+    kInput.BackgroundTransparency = 1; kInput.PlaceholderText = "Paste your key here..."
+    kInput.PlaceholderColor3 = T.SubText; kInput.Text = ""
+    kInput.TextColor3 = T.Text; kInput.TextSize = 13; kInput.Font = Enum.Font.GothamSemibold
+    kInput.ClearTextOnFocus = false; kInput.ZIndex = 103; kInput.Parent = kBox
+
+    local statusLbl = label(mF,"",UDim2.new(1,-30,0,16),UDim2.new(0,15,0,118),T.SubText,11,Enum.Font.Gotham,Enum.TextXAlignment.Left,102)
+
+    -- Validate button
+    local valBtn = Instance.new("TextButton")
+    valBtn.Size = UDim2.new(0.48,-4,0,34); valBtn.Position = UDim2.new(0,15,0,140)
+    valBtn.BackgroundColor3 = T.Accent; valBtn.BorderSizePixel = 0
+    valBtn.Text = "Validate Key"; valBtn.TextColor3 = T.Text; valBtn.TextSize = 13
+    valBtn.Font = Enum.Font.GothamBold; valBtn.ZIndex = 103; valBtn.Parent = mF
+    corner(valBtn, UDim.new(0,12)); stroke(valBtn, T.Accent2, 1.2); grad(valBtn, T.Accent, Color3.fromRGB(160,120,235), 45)
+
+    -- Clear button
+    local clrBtn = Instance.new("TextButton")
+    clrBtn.Size = UDim2.new(0.48,-4,0,34); clrBtn.Position = UDim2.new(0.52,0,0,140)
+    clrBtn.BackgroundColor3 = T.Secondary; clrBtn.BorderSizePixel = 0
+    clrBtn.Text = "Clear"; clrBtn.TextColor3 = T.Text; clrBtn.TextSize = 13
+    clrBtn.Font = Enum.Font.GothamBold; clrBtn.ZIndex = 103; clrBtn.Parent = mF
+    corner(clrBtn, UDim.new(0,12)); stroke(clrBtn, T.Stroke, 1.2); grad(clrBtn, T.Secondary, Color3.fromRGB(40,40,65), 45)
+
+    local infoF = frame(mF, UDim2.new(1,-30,0,68), UDim2.new(0,15,0,182), T.Secondary, 102)
+    corner(infoF, UDim.new(0,14)); stroke(infoF, T.Stroke, 1); grad(infoF, T.Secondary, Color3.fromRGB(32,32,55), 180)
+    local infoL = label(infoF,"How to get a key:\nJoin our Discord · Purchase or obtain a key · Paste above",
+        UDim2.new(1,-16,1,-8),UDim2.new(0,8,0,4),T.SubText,11,Enum.Font.Gotham,Enum.TextXAlignment.Left,103)
+    infoL.TextWrapped = true; infoL.TextYAlignment = Enum.TextYAlignment.Top
+
+    -- entrance
+    mF.Size = UDim2.new(0,0,0,0); mF.BackgroundTransparency = 1
+    tw(mF, {Size=UDim2.new(0,380,0,270), BackgroundTransparency=0}, 0.5)
+
+    local function setStatus(txt, isErr)
+        statusLbl.Text = txt
+        statusLbl.TextColor3 = isErr and T.Error or T.Success
+    end
+
+    local function makeLeaf()
+        local lg = Instance.new("ScreenGui")
+        lg.Name = "BoltLuneLeaf"; lg.ResetOnSpawn = false; lg.Parent = PlayerGui
+        local lb = Instance.new("TextButton")
+        lb.Size = UDim2.new(0,44,0,44); lb.Position = UDim2.new(0,20,0,20)
+        lb.BackgroundColor3 = T.Accent; lb.BorderSizePixel = 0; lb.Text = ""
+        lb.TextSize = 22; lb.Font = Enum.Font.GothamBold; lb.ZIndex = 200; lb.Parent = lg
+        corner(lb, UDim.new(1,0)); stroke(lb, T.Accent2, 2); grad(lb, T.Accent, Color3.fromRGB(160,120,235), 135)
+        lb.MouseEnter:Connect(function() tw(lb,{Size=UDim2.new(0,50,0,50)},0.2) end)
+        lb.MouseLeave:Connect(function() tw(lb,{Size=UDim2.new(0,44,0,44)},0.2) end)
+        lb.MouseButton1Click:Connect(function()
+            lg:Destroy(); kGui.Enabled = true
+            mF.Size = UDim2.new(0,0,0,0); mF.BackgroundTransparency = 1
+            tw(mF, {Size=UDim2.new(0,380,0,270), BackgroundTransparency=0}, 0.4)
+        end)
+    end
+
+    closeK.MouseButton1Click:Connect(function()
+        tw(mF, {Size=UDim2.new(0,0,0,0), BackgroundTransparency=1}, 0.3)
+        task.wait(0.3); kGui.Enabled = false; makeLeaf()
+    end)
+
+    valBtn.MouseEnter:Connect(function() tw(valBtn,{BackgroundColor3=Color3.fromRGB(200,160,255)},0.2) end)
+    valBtn.MouseLeave:Connect(function() tw(valBtn,{BackgroundColor3=T.Accent},0.2) end)
+    valBtn.MouseButton1Click:Connect(function()
+        local k = kInput.Text
+        if #k < 3 then setStatus("Key too short", true); return end
+        valBtn.Text = "Validating..."; valBtn.Active = false
+        setStatus("Checking...", false)
+        KeySystem:Validate(k, function(valid, msg)
+            if valid then
+                setStatus(msg, false)
+                task.wait(0.5)
+                tw(mF,{Size=UDim2.new(0,0,0,0),BackgroundTransparency=1},0.35)
+                task.wait(0.35); kGui:Destroy(); onSuccess()
+            else
+                setStatus(msg, true)
+                valBtn.Text = "Validate Key"; valBtn.Active = true
+            end
+        end)
+    end)
+
+    clrBtn.MouseButton1Click:Connect(function() kInput.Text = ""; setStatus("", false) end)
+    clrBtn.MouseEnter:Connect(function() tw(clrBtn,{BackgroundColor3=Color3.fromRGB(45,45,75)},0.2) end)
+    clrBtn.MouseLeave:Connect(function() tw(clrBtn,{BackgroundColor3=T.Secondary},0.2) end)
+
+    local saved = KeySystem:Load()
+    if saved then kInput.Text = saved end
+end
+
+-- ============================================================
+--  MAIN HUB
+-- ============================================================
+local function buildHub()
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "BoltLune"; gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; gui.Parent = PlayerGui
+
+    -- Main frame
+    local mF = frame(gui, UDim2.new(0,520,0,360), UDim2.new(0.5,-260,0.5,-180), T.Background, 10)
+    mF.AnchorPoint = Vector2.new(0.5,0.5)
+    corner(mF, UDim.new(0,18)); stroke(mF, T.Stroke, 1.8); grad(mF, T.Background, Color3.fromRGB(25,25,45), 135)
+
+    -- Top bar
+    local topBar = frame(mF, UDim2.new(1,0,0,42), UDim2.new(0,0,0,0), T.Secondary, 11)
+    corner(topBar, UDim.new(0,18)); grad(topBar, T.Secondary, Color3.fromRGB(35,35,60), 90)
+    frame(topBar, UDim2.new(1,0,0,21), UDim2.new(0,0,0.5,0), T.Secondary, 11).BorderSizePixel = 0
+
+    label(topBar," Lune",UDim2.new(0,160,0,20),UDim2.new(0,14,0,4),T.Text,16,Enum.Font.GothamBold,Enum.TextXAlignment.Left,12)
+    label(topBar,"by Bolt Industries  |  v1.0",UDim2.new(0,200,0,14),UDim2.new(0,14,0,26),T.SubText,10,Enum.Font.Gotham,Enum.TextXAlignment.Left,12)
+
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0,28,0,28); closeBtn.Position = UDim2.new(1,-36,0,7)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(45,45,70); closeBtn.BorderSizePixel = 0
+    closeBtn.Text = ""; closeBtn.TextColor3 = T.Text; closeBtn.TextSize = 15
+    closeBtn.Font = Enum.Font.GothamBold; closeBtn.ZIndex = 13; closeBtn.Parent = topBar
+    corner(closeBtn, UDim.new(1,0)); stroke(closeBtn, T.Error, 1)
+
+    -- Sidebar
+    local sideBar = frame(mF, UDim2.new(0,122,1,-42), UDim2.new(0,0,0,42), T.Secondary, 11)
+    corner(sideBar, UDim.new(0,18)); grad(sideBar, T.Secondary, Color3.fromRGB(30,30,55), 180)
+    local sbFix = frame(sideBar, UDim2.new(0,60,1,0), UDim2.new(1,-60,0,0), T.Secondary, 11)
+    sbFix.BorderSizePixel = 0
+
+    local tabList = Instance.new("ScrollingFrame")
+    tabList.Size = UDim2.new(1,-8,1,-8); tabList.Position = UDim2.new(0,4,0,4)
+    tabList.BackgroundTransparency = 1; tabList.BorderSizePixel = 0
+    tabList.ScrollBarThickness = 2; tabList.ScrollBarImageColor3 = T.Accent
+    tabList.AutomaticCanvasSize = Enum.AutomaticSize.Y; tabList.CanvasSize = UDim2.new(0,0,0,0)
+    tabList.ZIndex = 12; tabList.Parent = sideBar
+    local tabLayout = Instance.new("UIListLayout")
+    tabLayout.Padding = UDim.new(0,5); tabLayout.SortOrder = Enum.SortOrder.LayoutOrder; tabLayout.Parent = tabList
+
+    -- Indicator bar
+    local indicator = frame(sideBar, UDim2.new(0,3,0,0), UDim2.new(0,0,0,0), T.Accent, 13)
+    corner(indicator, UDim.new(0,2))
+
+    -- Content area
+    local contentArea = frame(mF, UDim2.new(1,-132,1,-52), UDim2.new(0,127,0,47), T.Background, 11)
+    contentArea.BackgroundTransparency = 1; contentArea.BorderSizePixel = 0
+
+    --  dragging 
+    local dragging, dragStart, startPos = false, nil, nil
+    topBar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = i.Position; startPos = mF.Position
+        end
+    end)
+    topBar.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and startPos then
+            if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+                local d = i.Position - dragStart
+                mF.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
+            end
+        end
+    end)
+
+    --  close / leaf 
+    local function makeLeaf()
+        local lg = Instance.new("ScreenGui")
+        lg.Name = "LuneLeaf"; lg.ResetOnSpawn = false; lg.Parent = PlayerGui
+        local lb = Instance.new("TextButton")
+        lb.Size = UDim2.new(0,44,0,44); lb.Position = UDim2.new(0,20,0,20)
+        lb.BackgroundColor3 = T.Accent; lb.BorderSizePixel = 0; lb.Text = ""
+        lb.TextSize = 22; lb.Font = Enum.Font.GothamBold; lb.ZIndex = 200; lb.Parent = lg
+        corner(lb, UDim.new(1,0)); stroke(lb, T.Accent2, 2); grad(lb, T.Accent, Color3.fromRGB(160,120,235), 135)
+        lb.MouseEnter:Connect(function() tw(lb,{Size=UDim2.new(0,50,0,50)},0.2) end)
+        lb.MouseLeave:Connect(function() tw(lb,{Size=UDim2.new(0,44,0,44)},0.2) end)
+        lb.MouseButton1Click:Connect(function()
+            lg:Destroy(); gui.Enabled = true
+            mF.Size = UDim2.new(0,0,0,0); mF.BackgroundTransparency = 1
+            tw(mF,{Size=UDim2.new(0,520,0,360),BackgroundTransparency=0},0.4)
+        end)
+    end
+    closeBtn.MouseEnter:Connect(function() tw(closeBtn,{BackgroundColor3=Color3.fromRGB(65,45,45)},0.2) end)
+    closeBtn.MouseLeave:Connect(function() tw(closeBtn,{BackgroundColor3=Color3.fromRGB(45,45,70)},0.2) end)
+    closeBtn.MouseButton1Click:Connect(function()
+        tw(mF,{Size=UDim2.new(0,0,0,0),BackgroundTransparency=1},0.3)
+        task.wait(0.3); gui.Enabled = false; makeLeaf()
+    end)
+
+    -- entrance
+    mF.Size = UDim2.new(0,0,0,0); mF.BackgroundTransparency = 1
+    tw(mF,{Size=UDim2.new(0,520,0,360),BackgroundTransparency=0},0.5)
+
+    --  Tab system 
+    local tabs = {}; local activeTab = nil
+
+    local function switchTab(td)
+        if activeTab == td then return end
+        if activeTab then
+            tw(activeTab.btn,{BackgroundColor3=T.Secondary},0.2)
+            local t = activeTab.btn:FindFirstChild("Lbl"); if t then t.TextColor3 = T.SubText end
+            activeTab.scroll.Visible = false
+        end
+        activeTab = td
+        tw(td.btn,{BackgroundColor3=Color3.fromRGB(42,42,72)},0.2)
+        local t = td.btn:FindFirstChild("Lbl"); if t then t.TextColor3 = T.Text end
+        td.scroll.Visible = true
+        local relY = td.btn.AbsolutePosition.Y - tabList.AbsolutePosition.Y
+        tw(indicator,{Position=UDim2.new(0,0,0,relY+4),Size=UDim2.new(0,3,0,28)},0.3)
+    end
+
+    local function mkTab(name)
+        local btn = Instance.new("TextButton")
+        btn.Name = name.."TabBtn"; btn.Size = UDim2.new(1,0,0,36)
+        btn.BackgroundColor3 = T.Secondary; btn.BorderSizePixel = 0
+        btn.Text = ""; btn.ZIndex = 13; btn.Parent = tabList
+        corner(btn, UDim.new(0,10)); grad(btn, T.Secondary, Color3.fromRGB(35,35,60), 0)
+
+        local lbl = label(btn, name, UDim2.new(1,-12,1,0), UDim2.new(0,12,0,0), T.SubText, 11, Enum.Font.GothamSemibold, Enum.TextXAlignment.Left, 14)
+        lbl.Name = "Lbl"
+
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Name = name.."Scroll"; scroll.Size = UDim2.new(1,0,1,0)
+        scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0
+        scroll.ScrollBarThickness = 2; scroll.ScrollBarImageColor3 = T.Accent
+        scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y; scroll.CanvasSize = UDim2.new(0,0,0,0)
+        scroll.Visible = false; scroll.ZIndex = 12; scroll.Parent = contentArea
+
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0,8); layout.SortOrder = Enum.SortOrder.LayoutOrder; layout.Parent = scroll
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0,6); pad.PaddingRight = UDim.new(0,6)
+        pad.PaddingTop = UDim.new(0,6); pad.PaddingBottom = UDim.new(0,8); pad.Parent = scroll
+
+        local td = {btn=btn, scroll=scroll, name=name}
+        table.insert(tabs, td)
+        btn.MouseEnter:Connect(function() if activeTab ~= td then tw(btn,{BackgroundColor3=Color3.fromRGB(38,38,65)},0.2) end end)
+        btn.MouseLeave:Connect(function() if activeTab ~= td then tw(btn,{BackgroundColor3=T.Secondary},0.2) end end)
+        btn.MouseButton1Click:Connect(function() switchTab(td) end)
+        if #tabs == 1 then switchTab(td) end
+        return scroll
+    end
+
+    --  Card / Toggle builders 
+    local function mkCard(parent, h)
+        local c = Instance.new("Frame")
+        c.Size = UDim2.new(1,0,0,h); c.BackgroundColor3 = T.Secondary
+        c.BorderSizePixel = 0; c.ZIndex = 13; c.Parent = parent
+        corner(c, UDim.new(0,12)); stroke(c, T.Stroke, 1.2); grad(c, T.Secondary, Color3.fromRGB(35,35,60), 0)
+        return c
+    end
+
+    local function mkToggle(parent, name, onCb)
+        local c = mkCard(parent, 48)
+        label(c,name,UDim2.new(1,-70,1,0),UDim2.new(0,12,0,0),T.Text,12,Enum.Font.GothamSemibold,Enum.TextXAlignment.Left,14)
+        local tbg = frame(c, UDim2.new(0,44,0,24), UDim2.new(1,-58,0.5,-12), T.ToggleOff, 14)
+        tbg.AnchorPoint = Vector2.new(0,0.5); corner(tbg, UDim.new(1,0)); stroke(tbg, T.Stroke, 1)
+        local circ = frame(tbg, UDim2.new(0,18,0,18), UDim2.new(0,3,0.5,-9), T.Text, 15)
+        circ.AnchorPoint = Vector2.new(0,0.5); corner(circ, UDim.new(1,0)); stroke(circ, T.Stroke, 0.4)
+        local state = false
+        local function updVis()
+            if state then
+                tw(tbg,{BackgroundColor3=T.ToggleOn},0.2)
+                tw(circ,{Position=UDim2.new(0,23,0.5,-9)},0.2)
+            else
+                tw(tbg,{BackgroundColor3=T.ToggleOff},0.2)
+                tw(circ,{Position=UDim2.new(0,3,0.5,-9)},0.2)
+            end
+        end
+        local clk = Instance.new("TextButton")
+        clk.Size = UDim2.new(1,0,1,0); clk.BackgroundTransparency = 1
+        clk.Text = ""; clk.ZIndex = 16; clk.Parent = c
+        clk.MouseButton1Click:Connect(function()
+            state = not state; updVis(); if onCb then onCb(state) end
+        end)
+        c.MouseEnter:Connect(function() tw(c,{BackgroundColor3=Color3.fromRGB(33,33,58)},0.2) end)
+        c.MouseLeave:Connect(function() tw(c,{BackgroundColor3=T.Secondary},0.2) end)
+        return c, function(v) state=v; updVis() end
+    end
+
+    local function mkInfo(parent, title, content)
+        local c = Instance.new("Frame")
+        c.Size = UDim2.new(1,0,0,0); c.AutomaticSize = Enum.AutomaticSize.Y
+        c.BackgroundColor3 = T.Secondary; c.BorderSizePixel = 0; c.ZIndex = 13; c.Parent = parent
+        corner(c, UDim.new(0,12)); stroke(c, T.Stroke, 1.2); grad(c, T.Secondary, Color3.fromRGB(35,35,60), 180)
+        local tl = label(c,title,UDim2.new(1,-16,0,22),UDim2.new(0,8,0,6),T.Accent,13,Enum.Font.GothamBold,Enum.TextXAlignment.Left,14)
+        stroke(tl, T.Accent, 0.4)
+        local cl = label(c,content,UDim2.new(1,-16,0,0),UDim2.new(0,8,0,30),T.Text,11,Enum.Font.Gotham,Enum.TextXAlignment.Left,14)
+        cl.AutomaticSize = Enum.AutomaticSize.Y; cl.TextWrapped = true; cl.TextYAlignment = Enum.TextYAlignment.Top
+        return c
+    end
+
+    local function mkStatusCard(parent, h)
+        local c = mkCard(parent, h)
+        local dot = frame(c, UDim2.new(0,7,0,7), UDim2.new(0,10,0.5,-3.5), T.SubText, 14)
+        dot.BorderSizePixel = 0; corner(dot, UDim.new(1,0))
+        local lbl = label(c,"Ready",UDim2.new(1,-30,1,0),UDim2.new(0,22,0,0),T.SubText,11,Enum.Font.GothamSemibold,Enum.TextXAlignment.Left,14)
+        return c, dot, lbl
+    end
+
+    local function mkTextInput(parent, h, placeholder, default)
+        local c = mkCard(parent, h)
+        local tb = Instance.new("TextBox")
+        tb.Size = UDim2.new(1,-16,1,-10); tb.Position = UDim2.new(0,8,0,5)
+        tb.BackgroundTransparency = 1; tb.PlaceholderText = placeholder or "Type here..."
+        tb.PlaceholderColor3 = T.SubText; tb.Text = default or ""
+        tb.TextColor3 = T.Accent; tb.TextSize = 12; tb.Font = Enum.Font.GothamSemibold
+        tb.ClearTextOnFocus = false; tb.ZIndex = 14; tb.Parent = c
+        return c, tb
+    end
+
+    local function mkBtn(parent, text, h, col)
+        col = col or T.Accent
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1,0,0,h or 34); b.BackgroundColor3 = col
+        b.BorderSizePixel = 0; b.Text = text; b.TextColor3 = T.Text
+        b.TextSize = 13; b.Font = Enum.Font.GothamBold; b.ZIndex = 14; b.Parent = parent
+        corner(b, UDim.new(0,10)); stroke(b, lerpC(col,T.Accent2,0.4), 1.2)
+        grad(b, col, lerpC(col,Color3.fromRGB(0,0,0),0.25), 90)
+        b.MouseEnter:Connect(function() tw(b,{BackgroundColor3=lerpC(col,Color3.fromRGB(255,255,255),0.15)},0.2) end)
+        b.MouseLeave:Connect(function() tw(b,{BackgroundColor3=col},0.2) end)
+        return b
+    end
+
+    -- notif
+    local notifQ = 0
+    local function notify(text, col, dur)
+        task.spawn(function()
+            notifQ = notifQ + 1; local off = (notifQ-1)*46
+            local nf = frame(gui, UDim2.new(0,300,0,38), UDim2.new(0.5,-150,0,-50+off), T.Secondary, 99)
+            corner(nf, UDim.new(0,12)); stroke(nf, col or T.Accent, 1.5)
+            local bar = frame(nf, UDim2.new(0,3,1,-8), UDim2.new(0,5,0,4), col or T.Accent, 100)
+            bar.BorderSizePixel = 0; corner(bar, UDim.new(0,2))
+            local nl = label(nf,text,UDim2.new(1,-20,1,0),UDim2.new(0,16,0,0),T.Text,12,Enum.Font.GothamSemibold,Enum.TextXAlignment.Left,100)
+            nl.TextTruncate = Enum.TextTruncate.AtEnd
+            local ty = 20+off
+            tw(nf,{Position=UDim2.new(0.5,-150,0,ty)},0.32,Enum.EasingStyle.Back)
+            task.wait(dur or 2.8)
+            tw(nf,{Position=UDim2.new(0.5,-150,0,-56)},0.28)
+            task.wait(0.3); nf:Destroy(); notifQ = math.max(0,notifQ-1)
+        end)
+    end
+
+    -- ============================================================
+    --  TAB 1: AUTO SPIN  (Style + Ability)
+    -- ============================================================
+    local spinScroll = mkTab(" Auto Spin")
+
+    -- Style target input
+    local _, styleInput = mkTextInput(spinScroll, 38, "Target style name...", "Azmei")
+    styleInput.Parent.LayoutOrder = 1
+
+    -- Style status card
+    local _, styleDot, styleLbl = mkStatusCard(spinScroll, 32)
+    styleDot.Parent.Parent.LayoutOrder = 2
+
+    local styleDetCard = mkCard(spinScroll, 32)
+    styleDetCard.LayoutOrder = 3
+    local styleDetLbl = label(styleDetCard,"Detected style: scanning...",UDim2.new(1,-14,1,0),UDim2.new(0,7,0,0),T.Accent,11,Enum.Font.GothamSemibold,Enum.TextXAlignment.Left,14)
+
+    -- Style roll count
+    local styleStatCard = mkCard(spinScroll, 28)
+    styleStatCard.LayoutOrder = 4
+    local styleCountLbl = label(styleStatCard,"Rolls: 0  |  Last: —",UDim2.new(1,-14,1,0),UDim2.new(0,7,0,0),T.SubText,10,Enum.Font.Gotham,Enum.TextXAlignment.Left,14)
+
+    -- Style buttons
+    local spinBtnF = frame(spinScroll, UDim2.new(1,0,0,36), UDim2.new(0,0,0,0), Color3.fromRGB(0,0,0), 12)
+    spinBtnF.BackgroundTransparency = 1; spinBtnF.BorderSizePixel = 0; spinBtnF.LayoutOrder = 5
+    local uil1 = Instance.new("UIListLayout"); uil1.FillDirection = Enum.FillDirection.Horizontal
+    uil1.Padding = UDim.new(0,6); uil1.SortOrder = Enum.SortOrder.LayoutOrder; uil1.Parent = spinBtnF
+    local autoStyleBtn = mkBtn(spinBtnF," START STYLE SPIN",36,T.Accent); autoStyleBtn.Size = UDim2.new(0.65,-3,1,0)
+    local singleStyleBtn = mkBtn(spinBtnF," Roll Once",36,T.Secondary); singleStyleBtn.Size = UDim2.new(0.35,-3,1,0)
+
+    -- Divider
+    local div1 = frame(spinScroll, UDim2.new(1,0,0,1), UDim2.new(0,0,0,0), T.Stroke, 13)
+    div1.LayoutOrder = 6; div1.BorderSizePixel = 0
+
+    -- Ability target input
+    local _, abilInput = mkTextInput(spinScroll, 38, "Target ability name...", "Magnetic Pull")
+    abilInput.Parent.LayoutOrder = 7
+
+    -- Ability status
+    local _, abilDot, abilLbl = mkStatusCard(spinScroll, 32)
+    abilDot.Parent.Parent.LayoutOrder = 8
+
+    local abilDetCard = mkCard(spinScroll, 32)
+    abilDetCard.LayoutOrder = 9
+    local abilDetLbl = label(abilDetCard,"Detected ability: scanning...",UDim2.new(1,-14,1,0),UDim2.new(0,7,0,0),T.Accent2,11,Enum.Font.GothamSemibold,Enum.TextXAlignment.Left,14)
+
+    local abilStatCard = mkCard(spinScroll, 28)
+    abilStatCard.LayoutOrder = 10
+    local abilCountLbl = label(abilStatCard,"Rolls: 0  |  Last: —",UDim2.new(1,-14,1,0),UDim2.new(0,7,0,0),T.SubText,10,Enum.Font.Gotham,Enum.TextXAlignment.Left,14)
+
+    local spinBtnF2 = frame(spinScroll, UDim2.new(1,0,0,36), UDim2.new(0,0,0,0), Color3.fromRGB(0,0,0), 12)
+    spinBtnF2.BackgroundTransparency = 1; spinBtnF2.BorderSizePixel = 0; spinBtnF2.LayoutOrder = 11
+    local uil2 = Instance.new("UIListLayout"); uil2.FillDirection = Enum.FillDirection.Horizontal
+    uil2.Padding = UDim.new(0,6); uil2.SortOrder = Enum.SortOrder.LayoutOrder; uil2.Parent = spinBtnF2
+    local autoAbilBtn = mkBtn(spinBtnF2," START ABILITY SPIN",36,T.Accent2); autoAbilBtn.Size = UDim2.new(0.65,-3,1,0)
+    local singleAbilBtn = mkBtn(spinBtnF2," Roll Once",36,T.Secondary); singleAbilBtn.Size = UDim2.new(0.35,-3,1,0)
+
+    --  Style spin logic 
+    local styleSpinning = false
+    local function updateStyleDisplay()
+        local st, _, ss = getCurrentStyle()
+        styleDetLbl.Text = "Detected style: " .. st
+        return st, ss
+    end
+
+    local function doStyleSpin()
+        if styleSpinning then return end
+        styleSpinning = true; local rolls = 0
+        autoStyleBtn.Text = " STOP SPINNING"
+        tw(autoStyleBtn,{BackgroundColor3=T.Danger},0.2)
+
+        while styleSpinning do
+            rolls = rolls + 1
+            styleCountLbl.Text = "Rolls: " .. rolls .. "  |  Last: —"
+            styleLbl.Text = "Rolling... (#" .. rolls .. ")"
+            styleLbl.TextColor3 = T.Gold; tw(styleDot,{BackgroundColor3=T.Gold},0.1)
+
+            local targets = parseTargets(styleInput.Text)
+            local _, ss = updateStyleDisplay()
+            local pre = nil
+            for _, t in ipairs(targets) do if checkHasStyle(t, ss) then pre = t; break end end
+            if pre then
+                styleSpinning = false
+                styleLbl.Text = " Already have " .. pre .. "!"
+                styleLbl.TextColor3 = T.Success; tw(styleDot,{BackgroundColor3=T.Success},0.2)
+                notify("Already have " .. pre .. "!", T.Success); break
+            end
+
+            local ok = pcall(invokeStyleRoll)
+            local found = nil
+            for _ = 1, 15 do
+                task.wait(0.04)
+                local _, ssa = updateStyleDisplay()
+                for _, t in ipairs(targets) do if checkHasStyle(t, ssa) then found = t; break end end
+                if found then break end
+            end
+            if not found then
+                task.wait(0.12)
+                local _, ssa = updateStyleDisplay()
+                for _, t in ipairs(targets) do if checkHasStyle(t, ssa) then found = t; break end end
+            end
+
+            if ok then
+                if found then
+                    styleSpinning = false
+                    styleLbl.Text = " " .. found .. " OBTAINED!"
+                    styleLbl.TextColor3 = T.Success; tw(styleDot,{BackgroundColor3=T.Success},0.2)
+                    notify(" " .. found .. " OBTAINED!", T.Success); break
+                else
+                    local st = getCurrentStyle()
+                    styleCountLbl.Text = "Rolls: " .. rolls .. "  |  Last: " .. st:sub(1,18)
+                    styleLbl.Text = "Got: " .. st:sub(1,22)
+                    styleLbl.TextColor3 = T.Gold; tw(styleDot,{BackgroundColor3=T.Gold},0.1)
+                end
+            else
+                styleLbl.Text = "Roll failed"; styleLbl.TextColor3 = T.Error
+            end
+            task.wait(0.05)
+        end
+
+        autoStyleBtn.Text = " START STYLE SPIN"
+        tw(autoStyleBtn,{BackgroundColor3=T.Accent},0.2)
+        if not styleSpinning then
+            styleLbl.TextColor3 = T.SubText; tw(styleDot,{BackgroundColor3=T.SubText},0.2)
+        end
+        styleSpinning = false
+    end
+
+    autoStyleBtn.MouseButton1Click:Connect(function()
+        if styleSpinning then
+            styleSpinning = false
+            styleLbl.Text = " Stopped"; styleLbl.TextColor3 = T.SubText
+            tw(styleDot,{BackgroundColor3=T.SubText},0.2)
+        else
+            task.spawn(doStyleSpin)
+        end
+    end)
+
+    singleStyleBtn.MouseButton1Click:Connect(function()
+        styleLbl.Text = "Rolling..."; styleLbl.TextColor3 = T.Gold; tw(styleDot,{BackgroundColor3=T.Gold},0.1)
+        local ok = pcall(invokeStyleRoll)
+        local targets = parseTargets(styleInput.Text); local found = nil
+        for _ = 1, 15 do
+            task.wait(0.04)
+            local _, ssa = updateStyleDisplay()
+            for _, t in ipairs(targets) do if checkHasStyle(t, ssa) then found = t; break end end
+            if found then break end
+        end
+        if ok then
+            if found then
+                styleLbl.Text = " GOT " .. found .. "!"; styleLbl.TextColor3 = T.Success
+            else
+                local st = getCurrentStyle(); styleLbl.Text = "Got: " .. st:sub(1,22); styleLbl.TextColor3 = T.Gold
+            end
+        else
+            styleLbl.Text = "Failed"; styleLbl.TextColor3 = T.Error
+        end
+        tw(styleDot,{BackgroundColor3=styleLbl.TextColor3},0.1)
+    end)
+
+    --  Ability spin logic 
+    local abilSpinning = false
+    local function updateAbilDisplay()
+        local abs = getAbilitySlots()
+        local names = {}
+        for _, a in ipairs(abs) do table.insert(names, a.name..(a.equipped and " " or "")) end
+        abilDetLbl.Text = "Abilities: " .. (#names > 0 and table.concat(names,", "):sub(1,50) or "none found")
+        return abs
+    end
+
+    local function doAbilSpin()
+        if abilSpinning then return end
+        abilSpinning = true; local rolls = 0
+        autoAbilBtn.Text = " STOP SPINNING"
+        tw(autoAbilBtn,{BackgroundColor3=T.Danger},0.2)
+
+        while abilSpinning do
+            rolls = rolls + 1
+            abilCountLbl.Text = "Rolls: " .. rolls .. "  |  Last: —"
+            abilLbl.Text = "Rolling... (#" .. rolls .. ")"
+            abilLbl.TextColor3 = T.Gold; tw(abilDot,{BackgroundColor3=T.Gold},0.1)
+
+            local targets = parseTargets(abilInput.Text)
+            local ab = updateAbilDisplay()
+            local pre = nil
+            for _, t in ipairs(targets) do if checkHasAbility(t, ab) then pre = t; break end end
+            if pre then
+                abilSpinning = false
+                abilLbl.Text = " Already have " .. pre .. "!"
+                abilLbl.TextColor3 = T.Success; tw(abilDot,{BackgroundColor3=T.Success},0.2)
+                notify("Already have " .. pre .. "!", T.Success); break
+            end
+
+            local ok = pcall(invokeAbilityRoll)
+            local found = nil
+            for _ = 1, 15 do
+                task.wait(0.04)
+                local aba = updateAbilDisplay()
+                for _, t in ipairs(targets) do if checkHasAbility(t, aba) then found = t; break end end
+                if found then break end
+            end
+            if not found then
+                task.wait(0.12)
+                local aba = updateAbilDisplay()
+                for _, t in ipairs(targets) do if checkHasAbility(t, aba) then found = t; break end end
+            end
+
+            if ok then
+                if found then
+                    abilSpinning = false
+                    abilLbl.Text = " " .. found .. " OBTAINED!"
+                    abilLbl.TextColor3 = T.Success; tw(abilDot,{BackgroundColor3=T.Success},0.2)
+                    notify(" " .. found .. " OBTAINED!", T.Success); break
+                else
+                    local abs2 = getAbilitySlots()
+                    local ln = abs2[1] and abs2[1].name or "?"
+                    abilCountLbl.Text = "Rolls: " .. rolls .. "  |  Last: " .. ln:sub(1,18)
+                    abilLbl.Text = "Got: " .. ln:sub(1,22); abilLbl.TextColor3 = T.Gold
+                end
+            else
+                abilLbl.Text = "Roll failed"; abilLbl.TextColor3 = T.Error
+            end
+            task.wait(0.05)
+        end
+
+        autoAbilBtn.Text = " START ABILITY SPIN"
+        tw(autoAbilBtn,{BackgroundColor3=T.Accent2},0.2)
+        if not abilSpinning then
+            abilLbl.TextColor3 = T.SubText; tw(abilDot,{BackgroundColor3=T.SubText},0.2)
+        end
+        abilSpinning = false
+    end
+
+    autoAbilBtn.MouseButton1Click:Connect(function()
+        if abilSpinning then
+            abilSpinning = false
+            abilLbl.Text = " Stopped"; abilLbl.TextColor3 = T.SubText
+            tw(abilDot,{BackgroundColor3=T.SubText},0.2)
+        else
+            task.spawn(doAbilSpin)
+        end
+    end)
+
+    singleAbilBtn.MouseButton1Click:Connect(function()
+        abilLbl.Text = "Rolling..."; abilLbl.TextColor3 = T.Gold; tw(abilDot,{BackgroundColor3=T.Gold},0.1)
+        local ok = pcall(invokeAbilityRoll)
+        local targets = parseTargets(abilInput.Text); local found = nil
+        for _ = 1, 15 do
+            task.wait(0.04)
+            local aba = updateAbilDisplay()
+            for _, t in ipairs(targets) do if checkHasAbility(t, aba) then found = t; break end end
+            if found then break end
+        end
+        if ok then
+            if found then abilLbl.Text = " GOT " .. found .. "!"; abilLbl.TextColor3 = T.Success
+            else local abs2 = getAbilitySlots(); abilLbl.Text = "Got: "..(abs2[1] and abs2[1].name or "?"):sub(1,22); abilLbl.TextColor3 = T.Gold end
+        else abilLbl.Text = "Failed"; abilLbl.TextColor3 = T.Error end
+        tw(abilDot,{BackgroundColor3=abilLbl.TextColor3},0.1)
+    end)
+
+    -- Live update style/ability detection
+    local tickC = 0
+    RunService.Heartbeat:Connect(function()
+        tickC = tickC + 1
+        if tickC % 90 == 0 then updateStyleDisplay() end
+        if tickC % 180 == 0 then updateAbilDisplay() end
+    end)
+
+    -- ============================================================
+    --  TAB 2: INFINITE
+    -- ============================================================
+    local infScroll = mkTab(" Infinite")
+    local infActive = {}
+
+    local function mkInfTog(name, arg, col)
+        col = col or T.Accent
+        local c = mkCard(infScroll, 54)
+        local iconF = frame(c, UDim2.new(0,36,0,36), UDim2.new(0,8,0.5,-18), lerpC(col,T.Secondary,0.5), 14)
+        iconF.BorderSizePixel = 0; corner(iconF, UDim.new(0,10))
+        stroke(iconF, col, 1)
+        local icLbl = label(iconF,"",UDim2.new(1,0,1,0),UDim2.new(0,0,0,0),col,18,Enum.Font.GothamBold,Enum.TextXAlignment.Center,15)
+        local nl = label(c,name,UDim2.new(0.55,0,0,18),UDim2.new(0,52,0,8),T.Text,13,Enum.Font.GothamSemibold,Enum.TextXAlignment.Left,14)
+        local sl = label(c," Inactive",UDim2.new(0.55,0,0,12),UDim2.new(0,52,0,30),T.SubText,9,Enum.Font.Gotham,Enum.TextXAlignment.Left,14)
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0,64,0,30); btn.Position = UDim2.new(1,-72,0.5,-15)
+        btn.BackgroundColor3 = T.Danger; btn.BorderSizePixel = 0; btn.Text = "OFF"
+        btn.TextColor3 = T.Text; btn.TextSize = 13; btn.Font = Enum.Font.GothamBold
+        btn.ZIndex = 15; btn.Parent = c
+        corner(btn, UDim.new(0,8)); stroke(btn, lerpC(T.Danger,T.Stroke,0.3), 1)
+
+        local on = false
+        btn.MouseButton1Click:Connect(function()
+            on = not on; infActive[name] = on
+            if on then
+                tw(btn,{BackgroundColor3=T.ToggleOn},0.2); btn.Text = "ON"; btn.TextColor3 = T.Background
+                sl.Text = " Active"; sl.TextColor3 = T.ToggleOn
+                tw(iconF,{BackgroundColor3=lerpC(col,T.Secondary,0.3)},0.2)
+                task.spawn(function()
+                    while infActive[name] do
+                        pcall(function() invokeReward(arg) end); task.wait(1)
+                    end
+                end)
+            else
+                tw(btn,{BackgroundColor3=T.Danger},0.2); btn.Text = "OFF"; btn.TextColor3 = T.Text
+                sl.Text = " Inactive"; sl.TextColor3 = T.SubText
+                tw(iconF,{BackgroundColor3=lerpC(col,T.Secondary,0.5)},0.2)
+            end
+        end)
+        c.MouseEnter:Connect(function() tw(c,{BackgroundColor3=Color3.fromRGB(33,33,58)},0.2) end)
+        c.MouseLeave:Connect(function() tw(c,{BackgroundColor3=T.Secondary},0.2) end)
+    end
+
+    mkInfTog("Lucky Spins",    1, T.Accent)
+    mkInfTog("Yen",            2, T.Gold)
+    mkInfTog("Ability Spins",  4, T.Accent2)
+
+    -- ============================================================
+    --  TAB 3: VISUAL  (Predictor + Hitbox + Fast Flags)
+    -- ============================================================
+    local visScroll = mkTab(" Visual")
+
+    --  Ball Predictor 
+    mkInfo(visScroll, " Ball Predictor", "Shows a vertical neon line + floor rings under the ball.\nCLIENT_BALL is auto-detected first (score +1000).")
+
+    local predBallCard = mkCard(visScroll, 36)
+    local predBallLbl = label(predBallCard,"Ball: scanning...",UDim2.new(1,-100,1,0),UDim2.new(0,8,0,0),T.Accent,11,Enum.Font.GothamSemibold,Enum.TextXAlignment.Left,14)
+    local cycleBtn = mkBtn(predBallCard," Cycle",24,T.Secondary)
+    cycleBtn.Size = UDim2.new(0,80,0,24); cycleBtn.Position = UDim2.new(1,-86,0.5,-12); cycleBtn.Parent = predBallCard
+    cycleBtn.ZIndex = 15
+
+    local predCard, predDot, predLbl = mkStatusCard(visScroll, 32)
+
+    -- Predictor parts
+    local predLine = nil; local predRingBig = nil; local predRingSmall = nil
+    local predReady = false; local predPulse = 0
+    local predRP = RaycastParams.new(); predRP.FilterType = Enum.RaycastFilterType.Exclude
+
+    local function initPred()
+        if predReady then return end; predReady = true
+        predLine = Instance.new("Part"); predLine.Name = "BoltLine"
+        predLine.Material = Enum.Material.Neon; predLine.Color = Color3.fromRGB(0,255,80)
+        predLine.Anchored = true; predLine.CanCollide = false; predLine.CastShadow = false
+        predLine.Size = Vector3.new(0.12,1,0.12); predLine.Transparency = 1; predLine.Parent = workspace
+        predRingBig = Instance.new("Part"); predRingBig.Name = "BoltLandRing"
+        predRingBig.Material = Enum.Material.Neon; predRingBig.Color = T.Accent
+        predRingBig.Shape = Enum.PartType.Cylinder
+        predRingBig.Anchored = true; predRingBig.CanCollide = false; predRingBig.CastShadow = false
+        predRingBig.Size = Vector3.new(0.09,6,6); predRingBig.Transparency = 1; predRingBig.Parent = workspace
+        predRingSmall = Instance.new("Part"); predRingSmall.Name = "BoltLandInner"
+        predRingSmall.Material = Enum.Material.Neon; predRingSmall.Color = T.Accent2
+        predRingSmall.Shape = Enum.PartType.Cylinder
+        predRingSmall.Anchored = true; predRingSmall.CanCollide = false; predRingSmall.CastShadow = false
+        predRingSmall.Size = Vector3.new(0.07,1.8,1.8); predRingSmall.Transparency = 1; predRingSmall.Parent = workspace
+    end
+
+    local function hidePred()
+        if predLine then predLine.Transparency = 1 end
+        if predRingBig then predRingBig.Transparency = 1 end
+        if predRingSmall then predRingSmall.Transparency = 1 end
+    end
+
+    local function destroyPred()
+        local function dk(x) if x and x.Parent then x:Destroy() end end
+        dk(predLine); dk(predRingBig); dk(predRingSmall)
+        predLine = nil; predRingBig = nil; predRingSmall = nil; predReady = false
+    end
+
+    local predOn = false; local predConn = nil
+
+    local function runPred()
+        local sel = getSelectedBall()
+        if not sel or not sel.part or not sel.part.Parent then
+            hidePred()
+            predBallLbl.Text = "Ball: no ball in workspace"
+            predLbl.Text = "Waiting..."; predLbl.TextColor3 = T.SubText
+            tw(predDot,{BackgroundColor3=T.SubText},0.1); return
+        end
+
+        predBallLbl.Text = string.format("Ball: %s | sc:%d", sel.name:sub(1,20), ballScore(sel))
+
+        local excl = {}
+        for _, p in ipairs(Players:GetPlayers()) do if p.Character then table.insert(excl,p.Character) end end
+        if predLine and predLine.Parent then table.insert(excl,predLine) end
+        if predRingBig and predRingBig.Parent then table.insert(excl,predRingBig) end
+        if predRingSmall and predRingSmall.Parent then table.insert(excl,predRingSmall) end
+        predRP.FilterDescendantsInstances = excl
+
+        local bPos = sel.part.Position
+        local vel = getBV(sel); local spd = vel.Magnitude
+
+        local ray = workspace:Raycast(bPos, Vector3.new(0,-300,0), predRP)
+        if not ray then hidePred(); predLbl.Text = "Out of range"; predLbl.TextColor3 = T.SubText; return end
+
+        local floorY = ray.Position.Y
+        local ballH = bPos.Y - floorY
+
+        predPulse = predPulse + 0.07
+        local pulse = 1 + math.sin(predPulse) * 0.1
+
+        if predLine and predLine.Parent then
+            predLine.Size = Vector3.new(0.12, math.max(0.1,ballH), 0.12)
+            predLine.CFrame = CFrame.new(bPos.X, floorY + ballH*0.5, bPos.Z)
+            predLine.Transparency = 0.08
+        end
+        if predRingBig and predRingBig.Parent then
+            local r = (3.0 + math.clamp(spd*0.05,0,2)) * pulse
+            predRingBig.Size = Vector3.new(0.09, r*2, r*2)
+            predRingBig.CFrame = CFrame.new(bPos.X, floorY+0.06, bPos.Z) * CFrame.Angles(0,0,math.pi/2)
+            predRingBig.Transparency = 0.25
+        end
+        if predRingSmall and predRingSmall.Parent then
+            local ri = 0.85 * pulse
+            predRingSmall.Size = Vector3.new(0.07, ri*2, ri*2)
+            predRingSmall.CFrame = CFrame.new(bPos.X, floorY+0.04, bPos.Z) * CFrame.Angles(0,0,math.pi/2)
+            predRingSmall.Transparency = 0.2
+        end
+
+        local char = LocalPlayer.Character; local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local dist = hrp and math.floor((bPos-hrp.Position).Magnitude) or 0
+        predLbl.Text = string.format("ON | %dst | H:%.1fst | spd:%d", dist, ballH, math.floor(spd))
+        predLbl.TextColor3 = T.Accent; tw(predDot,{BackgroundColor3=T.Accent},0.1)
+    end
+
+    local predToggle, setPredToggle = mkToggle(visScroll, "Enable Predictor", function(on)
+        predOn = on
+        if on then
+            initPred(); predLbl.Text = "ON — scanning..."; predLbl.TextColor3 = T.Accent
+            tw(predDot,{BackgroundColor3=T.Accent},0.2)
+            if predConn then predConn:Disconnect() end
+            predConn = RunService.Heartbeat:Connect(function()
+                if not predOn then return end; pcall(runPred)
+            end)
+            notify("Predictor ON!", T.Accent)
+        else
+            if predConn then predConn:Disconnect(); predConn = nil end
+            destroyPred()
+            predLbl.Text = "OFF"; predLbl.TextColor3 = T.SubText
+            tw(predDot,{BackgroundColor3=T.SubText},0.2)
+        end
+    end)
+
+    cycleBtn.MouseButton1Click:Connect(function()
+        local nxt = cycleBall()
+        if nxt then notify("Locked: "..nxt.name, T.Gold) end
+    end)
+
+    --  Hitbox Expander 
+    mkInfo(visScroll, " Hitbox Expander",
+        "Invisible CanCollide=true sphere overlaps ball.\nGhost sphere shows its size visually.\nYou can still pass through freely.")
+
+    local hbSz = 8
+    local hbSzCard = mkCard(visScroll, 36)
+    local hbSzLbl = label(hbSzCard,"Size: 8 st",UDim2.new(1,-90,1,0),UDim2.new(0,8,0,0),T.Accent,11,Enum.Font.GothamSemibold,Enum.TextXAlignment.Left,14)
+    local hbDecBtn = mkBtn(hbSzCard,"",26,T.Secondary)
+    hbDecBtn.Size = UDim2.new(0,32,0,26); hbDecBtn.Position = UDim2.new(1,-70,0.5,-13)
+    hbDecBtn.Parent = hbSzCard; hbDecBtn.ZIndex = 15
+    local hbIncBtn = mkBtn(hbSzCard,"+",26,T.Secondary)
+    hbIncBtn.Size = UDim2.new(0,32,0,26); hbIncBtn.Position = UDim2.new(1,-34,0.5,-13)
+    hbIncBtn.Parent = hbSzCard; hbIncBtn.ZIndex = 15
+
+    local hbCard, hbDot, hbLbl = mkStatusCard(visScroll, 32)
+
+    local hbActive = false; local hbInvis = nil; local hbGhost = nil
+    local hbFollow = nil; local hbWatch = nil; local hbCurBall = nil
+
+    local function destroyHb()
+        if hbFollow then hbFollow:Disconnect(); hbFollow = nil end
+        if hbWatch then hbWatch:Disconnect(); hbWatch = nil end
+        local function dk(x) if x and x.Parent then x:Destroy() end end
+        dk(hbInvis); dk(hbGhost); hbInvis = nil; hbGhost = nil; hbCurBall = nil
+    end
+
+    local function makeHb(ballPart)
+        destroyHb(); hbCurBall = ballPart
+        local sz = Vector3.new(hbSz,hbSz,hbSz)
+        -- Invisible collision sphere (CanCollide=true — server registers this)
+        hbInvis = Instance.new("Part"); hbInvis.Name = "BoltHitInvis"
+        hbInvis.Shape = Enum.PartType.Ball; hbInvis.Size = sz; hbInvis.CFrame = ballPart.CFrame
+        hbInvis.Anchored = true; hbInvis.CanCollide = true; hbInvis.CanQuery = true
+        hbInvis.CastShadow = false; hbInvis.Transparency = 1
+        hbInvis.Material = Enum.Material.SmoothPlastic; hbInvis.Parent = workspace
+        -- Ghost visual (CanCollide=false — player passes through)
+        hbGhost = Instance.new("Part"); hbGhost.Name = "BoltHitGhost"
+        hbGhost.Shape = Enum.PartType.Ball; hbGhost.Size = sz; hbGhost.CFrame = ballPart.CFrame
+        hbGhost.Anchored = true; hbGhost.CanCollide = false; hbGhost.CanQuery = false
+        hbGhost.CanTouch = false; hbGhost.CastShadow = false
+        hbGhost.Material = Enum.Material.Neon; hbGhost.Color = T.Accent; hbGhost.Transparency = 0.6
+        hbGhost.Parent = workspace
+        hbFollow = RunService.Heartbeat:Connect(function()
+            if not hbActive or not ballPart or not ballPart.Parent then destroyHb(); return end
+            local cf = ballPart.CFrame; local nsz = Vector3.new(hbSz,hbSz,hbSz)
+            if hbInvis and hbInvis.Parent then hbInvis.CFrame = cf; hbInvis.Size = nsz end
+            if hbGhost and hbGhost.Parent then hbGhost.CFrame = cf; hbGhost.Size = nsz end
+        end)
+    end
+
+    local function startHbWatcher()
+        if hbWatch then hbWatch:Disconnect() end; local cf = 0
+        hbWatch = RunService.Heartbeat:Connect(function()
+            if not hbActive then return end; cf = cf + 1; if cf % 45 ~= 0 then return end
+            local sel = getSelectedBall()
+            local best = sel and sel.part or nil
+            if best ~= hbCurBall then if best then makeHb(best) else destroyHb() end end
+        end)
+    end
+
+    hbDecBtn.MouseButton1Click:Connect(function()
+        hbSz = math.max(1, hbSz-1); hbSzLbl.Text = "Size: "..hbSz.." st"
+        local nsz = Vector3.new(hbSz,hbSz,hbSz)
+        if hbInvis and hbInvis.Parent then hbInvis.Size = nsz end
+        if hbGhost and hbGhost.Parent then hbGhost.Size = nsz end
+    end)
+    hbIncBtn.MouseButton1Click:Connect(function()
+        hbSz = math.min(50, hbSz+1); hbSzLbl.Text = "Size: "..hbSz.." st"
+        local nsz = Vector3.new(hbSz,hbSz,hbSz)
+        if hbInvis and hbInvis.Parent then hbInvis.Size = nsz end
+        if hbGhost and hbGhost.Parent then hbGhost.Size = nsz end
+    end)
+
+    local hbToggle, setHbToggle = mkToggle(visScroll, "Enable Hitbox", function(on)
+        hbActive = on
+        if on then
+            local sel = getSelectedBall(); if sel then makeHb(sel.part) end
+            startHbWatcher()
+            hbLbl.Text = "ON — "..hbSz.."st | collision+ghost"
+            hbLbl.TextColor3 = T.Accent; tw(hbDot,{BackgroundColor3=T.Accent},0.2)
+            notify("Hitbox ON! "..hbSz.."st", T.Accent)
+        else
+            destroyHb()
+            hbLbl.Text = "OFF — normal hitbox"; hbLbl.TextColor3 = T.SubText
+            tw(hbDot,{BackgroundColor3=T.SubText},0.2)
+        end
+    end)
+
+    --  Fast Flags 
+    mkInfo(visScroll, " Fast Flags — Nuclear",
+        "Kills ALL VFX, textures, lights, shadows, SurfaceAppearance, crowd/decorations.\nApplied async — no frame stutter. Fully reversible.")
+
+    local ffCard2, ffDot, ffLbl = mkStatusCard(visScroll, 32)
+
+    local CROWD_KW = {"crowd","spectator","bleacher","fan","npc","dummy","decoration","decor","easter","egg","flower","plant","banner","flag","lantern","balloon","poster","confetti","streamer","statue","seasonal","holiday","pumpkin","snowman"}
+    local KEEP_KW  = {"court","floor","wall","ceiling","net","pole","spawn","base","boundary","ball"}
+    local function kwMatch(name, list)
+        local nl = name:lower()
+        for _, kw in ipairs(list) do if nl:find(kw,1,true) then return true end end
+        return false
+    end
+
+    local ffBk = {lg={},ef={},sky={},vfx={},lights={},tex={},sa={},shad={},bb={},hid={},ter={}}
+    local ffOn = false
+
+    local function applyFF()
+        ffBk = {lg={},ef={},sky={},vfx={},lights={},tex={},sa={},shad={},bb={},hid={},ter={}}
+        local LP = {GlobalShadows=false,Brightness=2.5,FogEnd=9e8,FogStart=9e8,
+                    Ambient=Color3.fromRGB(75,75,88),OutdoorAmbient=Color3.fromRGB(55,55,66),ClockTime=14}
+        for prop, nv in pairs(LP) do
+            local ok, cv = pcall(function() return Lighting[prop] end)
+            if ok then table.insert(ffBk.lg,{p=prop,v=cv}); pcall(function() Lighting[prop]=nv end) end
+        end
+        local POST = {"BloomEffect","SunRaysEffect","DepthOfFieldEffect","ColorCorrectionEffect","BlurEffect","BlackAndWhiteEffect","Atmosphere"}
+        for _, child in pairs(Lighting:GetChildren()) do
+            local isPost = false
+            for _, cn in ipairs(POST) do if child:IsA(cn) then isPost=true; break end end
+            if isPost then
+                local ok,was = pcall(function() return child.Enabled end)
+                if ok then pcall(function() child.Enabled=false end); table.insert(ffBk.ef,{o=child,v=was}) end
+            end
+            if child:IsA("Sky") then
+                local wp = child.Parent; pcall(function() child.Parent=nil end); table.insert(ffBk.sky,{o=child,p=wp})
+            end
+        end
+        pcall(function()
+            local t = workspace.Terrain
+            for _, kv in ipairs({{"WaterWaveSize",0},{"WaterWaveSpeed",0},{"WaterTransparency",1},{"Decoration",false}}) do
+                local ok,was = pcall(function() return t[kv[1]] end)
+                if ok then table.insert(ffBk.ter,{o=t,k=kv[1],v=was}); pcall(function() t[kv[1]]=kv[2] end) end
+            end
+        end)
+        task.spawn(function()
+            local all = workspace:GetDescendants(); local done = 0
+            for _, obj in ipairs(all) do
+                done = done + 1; if done % 100 == 0 then task.wait(); if not ffOn then return end end
+                if obj:IsDescendantOf(gui) then continue end
+                if BOLT_OWN[obj.Name] or obj.Name:sub(1,4)=="Bolt" then continue end
+                local isLC = LocalPlayer.Character and obj:IsDescendantOf(LocalPlayer.Character)
+                local isRC = false
+                if not isLC then
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if p ~= LocalPlayer and p.Character and obj:IsDescendantOf(p.Character) then isRC=true; break end
+                    end
+                end
+                if isRC then
+                    if obj:IsA("BasePart") and obj.Name=="Handle" then
+                        local was=obj.Transparency; pcall(function() obj.Transparency=1 end); table.insert(ffBk.hid,{o=obj,v=was})
+                    end
+                    for _, cn in ipairs({"ParticleEmitter","Beam","Trail","Fire","Smoke","Sparkles"}) do
+                        if obj:IsA(cn) then local ok,was=pcall(function() return obj.Enabled end); if ok then pcall(function() obj.Enabled=false end); table.insert(ffBk.vfx,{o=obj,v=was}) end; break end
+                    end
+                    continue
+                end
+                if isLC then continue end
+                for _, cn in ipairs({"ParticleEmitter","Beam","Trail","Fire","Smoke","Sparkles","Explosion"}) do
+                    if obj:IsA(cn) then local ok,was=pcall(function() return obj.Enabled end); if ok then pcall(function() obj.Enabled=false end); table.insert(ffBk.vfx,{o=obj,v=was}) end; break end
+                end
+                for _, cn in ipairs({"PointLight","SpotLight","SurfaceLight"}) do
+                    if obj:IsA(cn) then local ok,was=pcall(function() return obj.Enabled end); if ok then pcall(function() obj.Enabled=false end); table.insert(ffBk.lights,{o=obj,v=was}) end; break end
+                end
+                if obj:IsA("Decal") or obj:IsA("Texture") then
+                    local was=obj.Transparency; pcall(function() obj.Transparency=1 end); table.insert(ffBk.tex,{o=obj,v=was})
+                end
+                if obj:IsA("SurfaceAppearance") then
+                    local wp=obj.Parent; pcall(function() obj.Parent=nil end); table.insert(ffBk.sa,{o=obj,p=wp})
+                end
+                for _, cn in ipairs({"BillboardGui","SurfaceGui"}) do
+                    if obj:IsA(cn) then local ok,was=pcall(function() return obj.Enabled end); if ok then pcall(function() obj.Enabled=false end); table.insert(ffBk.bb,{o=obj,v=was}) end; break end
+                end
+                if obj:IsA("BasePart") and obj.CastShadow then
+                    if not obj.Name:lower():find("ball",1,true) then
+                        pcall(function() obj.CastShadow=false end); table.insert(ffBk.shad,obj)
+                    end
+                end
+                if obj:IsA("Model") and kwMatch(obj.Name,CROWD_KW) and not kwMatch(obj.Name,KEEP_KW) then
+                    local isPc = false
+                    for _, p in ipairs(Players:GetPlayers()) do if p.Character==obj then isPc=true; break end end
+                    if not isPc then
+                        for _, part in ipairs(obj:GetDescendants()) do
+                            if part:IsA("BasePart") then
+                                local was=part.Transparency; pcall(function() part.Transparency=1 end); table.insert(ffBk.hid,{o=part,v=was})
+                            end
+                        end
+                    end
+                end
+            end
+            ffLbl.Text = "NUKED — max FPS active!"; ffLbl.TextColor3 = T.Gold
+            tw(ffDot,{BackgroundColor3=T.Gold},0.2); notify(" Nuclear ACTIVE!", T.Gold)
+        end)
+    end
+
+    local function removeFF()
+        task.spawn(function()
+            for _, e in ipairs(ffBk.lg) do pcall(function() Lighting[e.p]=e.v end) end
+            for _, e in ipairs(ffBk.ef) do pcall(function() if e.o and e.o.Parent then e.o.Enabled=e.v end end) end
+            for _, e in ipairs(ffBk.sky) do pcall(function() if e.o then e.o.Parent=e.p end end) end
+            for _, e in ipairs(ffBk.ter) do pcall(function() if e.o then e.o[e.k]=e.v end end) end
+            local c2=0; local function y() c2=c2+1; if c2%100==0 then task.wait() end end
+            for _, e in ipairs(ffBk.vfx) do y(); pcall(function() if e.o and e.o.Parent then e.o.Enabled=e.v end end) end
+            for _, e in ipairs(ffBk.lights) do y(); pcall(function() if e.o and e.o.Parent then e.o.Enabled=e.v end end) end
+            for _, e in ipairs(ffBk.tex) do y(); pcall(function() if e.o and e.o.Parent then e.o.Transparency=e.v end end) end
+            for _, e in ipairs(ffBk.sa) do y(); pcall(function() if e.o and e.p then e.o.Parent=e.p end end) end
+            for _, e in ipairs(ffBk.bb) do y(); pcall(function() if e.o and e.o.Parent then e.o.Enabled=e.v end end) end
+            for _, e in ipairs(ffBk.hid) do y(); pcall(function() if e.o and e.o.Parent then e.o.Transparency=e.v end end) end
+            for _, p2 in ipairs(ffBk.shad) do y(); pcall(function() if p2 and p2.Parent then p2.CastShadow=true end end) end
+            ffBk = {lg={},ef={},sky={},vfx={},lights={},tex={},sa={},shad={},bb={},hid={},ter={}}
+            ffLbl.Text = "OFF — restored"; ffLbl.TextColor3 = T.SubText; tw(ffDot,{BackgroundColor3=T.SubText},0.2)
+        end)
+    end
+
+    local ffToggle, setFfToggle = mkToggle(visScroll, "Enable Nuclear Fast Flags", function(on)
+        ffOn = on
+        if on then
+            ffLbl.Text = "Applying..."; ffLbl.TextColor3 = T.Gold; tw(ffDot,{BackgroundColor3=T.Gold},0.2)
+            applyFF()
+        else
+            removeFF()
+        end
+    end)
+
+    -- ============================================================
+    --  TAB 4: MOVE
+    -- ============================================================
+    local moveScroll = mkTab(" Move")
+    local Camera = workspace.CurrentCamera
+    local airOn = false; local smF = 0.18; local airConn = nil
+
+    mkInfo(moveScroll, " Air Rotation Fix", "Body follows camera look direction while airborne.\nUse the slider to adjust snap speed (lower = snappier).")
+
+    local smCard = mkCard(moveScroll, 36)
+    local smLbl = label(smCard,"Smoothness: 18%",UDim2.new(1,-90,1,0),UDim2.new(0,8,0,0),T.Accent,11,Enum.Font.GothamSemibold,Enum.TextXAlignment.Left,14)
+    local smDec = mkBtn(smCard,"",26,T.Secondary)
+    smDec.Size = UDim2.new(0,32,0,26); smDec.Position = UDim2.new(1,-70,0.5,-13); smDec.Parent = smCard; smDec.ZIndex = 15
+    local smInc = mkBtn(smCard,"+",26,T.Secondary)
+    smInc.Size = UDim2.new(0,32,0,26); smInc.Position = UDim2.new(1,-34,0.5,-13); smInc.Parent = smCard; smInc.ZIndex = 15
+
+    smDec.MouseButton1Click:Connect(function() smF = math.max(0.02,smF-0.02); smLbl.Text = "Smoothness: "..math.floor(smF*100).."%"; end)
+    smInc.MouseButton1Click:Connect(function() smF = math.min(1.0,smF+0.02); smLbl.Text = "Smoothness: "..math.floor(smF*100).."%"; end)
+
+    local airCard, airDot, airLbl = mkStatusCard(moveScroll, 32)
+
+    local airToggle, setAirToggle = mkToggle(moveScroll, "Air Rotation Fix", function(on)
+        airOn = on
+        if on then
+            airLbl.Text = "ON — follow cam"; airLbl.TextColor3 = T.Accent; tw(airDot,{BackgroundColor3=T.Accent},0.2)
+            if airConn then airConn:Disconnect() end
+            airConn = RunService.RenderStepped:Connect(function()
+                if not airOn then return end
+                local char = LocalPlayer.Character; if not char then return end
+                local hrp = char:FindFirstChild("HumanoidRootPart"); local hum = char:FindFirstChildOfClass("Humanoid")
+                if not hrp or not hum then return end
+                local state = hum:GetState()
+                local isAir = state==Enum.HumanoidStateType.Freefall or state==Enum.HumanoidStateType.Jumping or state==Enum.HumanoidStateType.Flying
+                if isAir then
+                    local cl = Camera.CFrame.LookVector; local fl = Vector3.new(cl.X,0,cl.Z)
+                    if fl.Magnitude < 0.01 then return end; fl = fl.Unit
+                    local tCF = CFrame.new(hrp.Position, hrp.Position+fl)
+                    hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + Vector3.new(
+                        hrp.CFrame.LookVector.X + (tCF.LookVector.X-hrp.CFrame.LookVector.X)*smF, 0,
+                        hrp.CFrame.LookVector.Z + (tCF.LookVector.Z-hrp.CFrame.LookVector.Z)*smF).Unit)
+                end
+            end)
+            notify("Air Rotation ON!", T.Accent)
+        else
+            airLbl.Text = "OFF"; airLbl.TextColor3 = T.SubText; tw(airDot,{BackgroundColor3=T.SubText},0.2)
+            if airConn then airConn:Disconnect(); airConn = nil end
+        end
+    end)
+
+    -- ============================================================
+    --  TAB 5: INFO
+    -- ============================================================
+    local infoScroll = mkTab(" Info")
+
+    mkInfo(infoScroll, " Lune v1.0", "UI Style: Lune by Minami/Tsundere\nScript: Bolt Industries\n\nAll features work with Volleyball Legends.")
+
+    mkInfo(infoScroll, " Hitbox Expander",
+        "Two-sphere system:\n• Invisible CanCollide=true — server registers the hit\n• Ghost sphere shows size, you pass through freely\nAdjust size 1–50 studs")
+
+    mkInfo(infoScroll, " Auto Spin",
+        "Style Spin: enter one or more target style names, comma or newline separated. Script rolls until it finds one.\n\nAbility Spin: same but for abilities.\n\nBoth stop automatically on match.")
+
+    mkInfo(infoScroll, " Fast Flags",
+        "Kills ALL:\n• VFX (particles, beams, trails, fire, smoke)\n• Textures + Decals (Transparency1)\n• SurfaceAppearance (detached — biggest GPU win)\n• Lights (PointLight, SpotLight, SurfaceLight)\n• Shadows on non-ball parts\n• Post-effects, atmosphere, sky\n• Crowd/decorative models\nFully reversed on disable.")
+
+    mkInfo(infoScroll, " Limits",
+        "Do NOT go over:\n• 1,000 Lucky Spins\n• 1,000 Ability Spins\n• 1,000,000 Yen\n\nDo NOT spam-execute the script.\nClose Roblox before rejoining.")
+
+    print("Lune v1.0 LOADED — © Bolt Industries")
+end
+
+-- ============================================================
+--  ENTRY — Try saved key first, else show key UI
+-- ============================================================
+local savedKey = KeySystem:Load()
+if savedKey and #savedKey > 3 then
+    KeySystem:Validate(savedKey, function(valid)
+        if valid then
+            buildHub()
+        else
+            buildKeyUI(function() buildHub() end)
+        end
+    end)
+else
+    buildKeyUI(function() buildHub() end)
+end
